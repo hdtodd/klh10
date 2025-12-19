@@ -1,0 +1,16 @@
+--- osdnet.c.orig	2025-12-10 16:19:59.672247409 -0500
++++ osdnet.c	2025-12-10 17:45:42.207644438 -0500
+@@ -1683,6 +1683,13 @@
+     int fd;
+     int i = 0;
+ 
++    if (strlen(osnpf->osnpf_ifnam) < BASENAMESIZE-1) {
++      strncpy(pfname, osnpf->osnpf_ifnam, BASENAMESIZE);
++    } else {
++      esfatal(1, "%s: ifname name %s too long for pfname size %d",
++	      __FUNCTION__, osnpf->osnpf_ifnam, BASENAMESIZE);
++    };
++    
+     if (DP_DBGFLG)
+ 	dbprint("pfopen: ifnam=%s", osnpf->osnpf_ifnam);
+ 
