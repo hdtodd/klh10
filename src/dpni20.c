@@ -187,7 +187,9 @@ struct ether_addr ihost_ea;	/* Native host ether addr for selected ifc */
  * in a shared memory location that may change at any time.
  */
 #define DBGFLG (dpni->dpni_dpc.dpc_debug)
-#define DP_DBGFLG (((struct dpni20_s *)dp.dp_adr)->dpni_dpc.dpc_debug)
+//[hdt]
+//#define DP_DBGFLG (((struct dpni20_s *)dp.dp_adr)->dpni_dpc.dpc_debug)
+#define DP_DBGFLG 1
 
 int nmcats = 0;
 unsigned char ethmcat[DPNI_MCAT_SIZ][6]; /* Table of known MCAT addresses */

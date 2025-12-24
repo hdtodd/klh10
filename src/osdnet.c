@@ -23,6 +23,7 @@
     file cannot satisfy all programs.
  */
 
+
 #include <unistd.h>	/* For basic Unix syscalls */
 #include <stdlib.h>
 #include <ctype.h>
@@ -70,7 +71,7 @@ void bridge_create(struct tuntap_context *tt_ctx, struct osnpf *osnpf);
 void tap_bridge_close(struct tuntap_context *tt_ctx);
 #endif /* KLH10_NET_BRIDGE */
 static void osn_iff_up(int s, char *ifname);
-static int pfopen_create(char *basename, struct tuntap_context *tt_ctx, struct osnpf *osnpf);
+static int pfopen_create(char *basename, struct tuntap_context *tt_ctx, struct osnpf *osnpf, char *ifname);
 #if KLH10_NET_VDE
 static void osn_pfinit_vde(struct pfdata *pfdata, struct osnpf *osnpf, void *pfarg);
 static void osn_pfdeinit_vde(struct pfdata *pfdata, struct osnpf *osnpf);
@@ -1376,7 +1377,7 @@ osn_pfinit(struct pfdata *pfdata, struct osnpf *osnpf, void *pfarg)
 	method = "";
 
     if (DP_DBGFLG)
-	dbprint("osn_pfinit: ifmeth=%s", method);
+	dbprintln("osn_pfinit: ifmeth=%s", method);
 
     /*
      * The order of tests here is the order of preference
@@ -1633,8 +1634,6 @@ tryagain:
 ssize_t
 osn_pfwrite_pcap(struct pfdata *pfdata, const void *buf, size_t nbytes)
 {
-    //if (DP_DBGFLG)
-    //	dbprint("osn_pfwrite: writing %d bytes", nbytes);
     return pcap_inject(pfdata->pf_handle, buf, nbytes);
 }
 #endif /* KLH10_NET_PCAP */
@@ -1667,6 +1666,7 @@ static void
 basenamecpy(char *dest, char *src, int len)
 {
     char *slash = strchr(src, '/');
+
     if (slash) {
 	strncpy(dest, slash + 1, len);
     } else {
@@ -1677,47 +1677,83 @@ basenamecpy(char *dest, char *src, int len)
 #define BASENAMESIZE	32
 
 static int
-pfopen(char *basename, struct tuntap_context *tt_ctx, struct osnpf *osnpf)
+pfopen(char *basename, struct tuntap_context *tt_ctx, struct osnpf *osnpf, char *ifname)
 {
     char pfname[BASENAMESIZE];
     int fd;
     int i = 0;
 
     if (DP_DBGFLG)
-	dbprint("pfopen: ifnam=%s", osnpf->osnpf_ifnam);
-
+      dbprintln("%s, line %d: osnpf->osnpf_ifnam=%s", __FUNCTION__, __LINE__, osnpf->osnpf_ifnam);
+ 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifname = %s", __FUNCTION__, __LINE__, ifname);
+    
 #if CENV_SYS_NETBSD
     /* See if an explicit tunnel unit number is given */
+    //[hdt]
+    if (DP_DBGFLG)
+      dbprintln("pfopen: checking isdigit() in %s", osnpf_ifnam);
     if (isdigit(osnpf->osnpf_ifnam[3])) {
 	fd = pfopen_create(basename, tt_ctx, osnpf);
 	if (fd >= 0) {
+            //[hdt]
+	    if (DP_DBGFLG)
+	      dbprintln("pfopen: pfopen_create() succeeded");
 	    return fd;
+	} else {
+            if (DP_DBGFLG)
+              dbprintln("pfopen: pfopen_create() failed");
+            //[\hdt]
 	}
     }
 #endif /* CENV_SYS_NETBSD */
 
     /* See if the device is a cloning device */
     fd = open(basename, O_RDWR, 0);
-
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: basename = %s", __FUNCTION__, __LINE__, basename);
+    
     if (fd < 0) {
-	/* Not a cloner. Find first free tunnel device. */
-	do {
-	    (void) snprintf(pfname, BASENAMESIZE, "%s%d", basename, i++);
-	    fd = open(pfname, O_RDWR, 0);
+      if (DP_DBGFLG)
+        dbprintln("%s: osnpf->osnpf_ifnam '%s' IS NOT a cloner", __FUNCTION__, osnpf->osnpf_ifnam);
+      if (DP_DBGFLG)
+        dbprintln("%s: find first free tunnel device %s", __FUNCTION__, osnpf->osnpf_ifnam);
+      /* Not a cloner. Find first free tunnel device. */
+      do {
+        (void) snprintf(pfname, BASENAMESIZE, "%s%d", basename, i++);
+        if (DP_DBGFLG)
+          dbprintln("pfopen: Trying to open %s", pfname);
+        fd = open(pfname, O_RDWR, 0);
 	} while (fd < 0 && errno == EBUSY);	/* If device busy, keep looking */
-	if (fd >= 0) {
-            basenamecpy(osnpf->osnpf_ifnam, pfname, IFNAM_LEN);
-	} else {	  
-  	    /* Note possible error meanings:
-	       ENOENT - no such filename
-	       ENXIO  - not configured in kernel
-	    */
-	    esfatal(1, "Couldn't find or open packetfilter device, last tried %s",
-	 	       pfname);
-	};
+      //[hdt]
+      if (DP_DBGFLG) {
+        dbprintln("%s: opened new tunnel device %s", __FUNCTION__, pfname);
+        } else {
+          dbprintln("pfopen: osnpf->osnpf_ifnam '%s' IS a cloner", osnpf->osnpf_ifnam);
+          };
+    } else {
+      strncpy(pfname, ifname, BASENAMESIZE);
     };
 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifname = %s", __FUNCTION__, __LINE__, ifname);
+    
+    if (fd < 0) {
+	/* Note possible error meanings:
+	   ENOENT - no such filename
+	   ENXIO  - not configured in kernel
+	*/
+	esfatal(1, "Couldn't find or open packetfilter device, last tried %s",
+		pfname);
+    }
+
+    if (DP_DBGFLG)
+    dbprintln("%s, line %d: pfname = %s", __FUNCTION__, __LINE__, pfname);
+
     tt_ctx->my_tap = TRUE;
+    basenamecpy(osnpf->osnpf_ifnam, pfname, IFNAM_LEN);
+
     return fd;		/* Success! */
 }
 
@@ -1798,6 +1834,11 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
     char *basename = "";
     int s;
 
+    if (DP_DBGFLG) {
+      dbprintln("%s, line %d: Entering, osnpf->osnpf_ifnam is %s", __FUNCTION__, __LINE__, osnpf->osnpf_ifnam);
+      dbprintln("%s, line %d: Entering, ifnam is %s", __FUNCTION__, __LINE__, ifnam);
+    };
+    
     if (strlen(osnpf->osnpf_ifnam) >= IFNAMSIZ) {
 	efatal(1, "interface name '%s' (more than %d chars)", osnpf->osnpf_ifnam, IFNAMSIZ);
     }
@@ -1805,9 +1846,8 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
     strncpy(tt_ctx.saved_ifnam, osnpf->osnpf_ifnam, IFNAM_LEN);
 
     if (DP_DBGFLG)
-	dbprint("Opening %s device",
-		pfdata->pf_meth == PF_METH_TUN ? "TUN" : "TAP");
-
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
     switch (pfdata->pf_meth) {
     case PF_METH_TUN:
 	pfdata->pf_ip4_only = TRUE;
@@ -1821,19 +1861,48 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
 	esfatal(0, "pf_meth value %d invalid", pfdata->pf_meth);
     }
 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
+    if (DP_DBGFLG)
+	dbprintln("osn_pfinit_tuntap: Opening %s device %s",
+		  pfdata->pf_meth == PF_METH_TUN ? "TUN" : "TAP",
+		  basename);
+
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
     osn_virt_ether(pfdata, osnpf);
 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
     /* Remote address is always that of emulated machine */
     ipremote = osnpf->osnpf_ip.ia_addr;
     iplocal = osnpf->osnpf_tun.ia_addr;
 
-    fd = pfopen(basename, &tt_ctx, osnpf);
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: basename = %s", __FUNCTION__, __LINE__, basename);
+
+    fd = pfopen(basename, &tt_ctx, osnpf, ifnam);
     if (fd < 0) {
 	esfatal(0, "Couldn't open tunnel device %s", basename);
     }
 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: basename = %s", __FUNCTION__, __LINE__, basename);
+
     memset(&ifr, 0, sizeof(ifr));
 
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
     if ((s = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
 	esfatal(1, "pf_init: tun socket() failed");
     }
@@ -1846,16 +1915,33 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
 	ifr.ifr_flags = IFF_TAP | IFF_NO_PI; /* TAP (yes Ethernet headers), no pkt info */
 	/* ip tuntap add mode tap */
     }
-    if (isdigit(ifnam[3])) {
+
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
+    if(DP_DBGFLG)
+      dbprintln("osn_pfinit_tuntap: ifnam requested as tt_ctx.saved_ifnam was %s", tt_ctx.saved_ifnam);
+
+    if (DP_DBGFLG)
+      dbprintln("%s, line %d: ifnam = %s", __FUNCTION__, __LINE__, ifnam);
+    
+    if (isdigit(tt_ctx.saved_ifnam[3])) {
 	/*
 	 * If a specific unit was requested, try to get it.
 	 * I don't know if it will be created if it does not exist yet.
 	 */
-	strcpy(ifr.ifr_name, ifnam);
+	strcpy(ifr.ifr_name, tt_ctx.saved_ifnam);
     }
+    if(DP_DBGFLG)
+      dbprintln("osn_pfinit_tuntap: attempt to turn on %s", ifr.ifr_name);
+
     if (ioctl(fd, TUNSETIFF, (void *) &ifr) < 0) /* turn it on */
 	esfatal(0, "Couldn't set tun device");
     strcpy(ifnam, ifr.ifr_name); /* get device name (typically "tun0") */
+    //[hdt]
+    if (DP_DBGFLG)
+      dbprintln("osn_pfinit_tuntap: after isdigit(), did set %s", ifnam);
+
 #endif /* CENV_SYS_LINUX */
 
     /*
@@ -1875,13 +1961,6 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
 	    dbprint("TAPGIFNAME returns %s", ifnam);
     }
 #endif
-
-    if (DP_DBGFLG) {
-	dbprintln("Opened %s, configuring for local (host) %s, remote (guest) %s",
-	    ifnam,
-	    ip_adrsprint(ipb1, (unsigned char *)&iplocal),
-	    ip_adrsprint(ipb2, (unsigned char *)&ipremote));
-    }
 
     /* Activate TUN device.
        First address is "local" -- doesn't matter if all we care about is
@@ -1905,11 +1984,24 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
 	char cmdbuff[128];	/* "Hacky" but simple method */
 	int res;
 
+    if (DP_DBGFLG) {
+      dbprintln("%s, line %d: Open %s, UP", // \n\tconfiguring for local (host) %s, remote (guest) %s",
+		__FUNCTION__, __LINE__);
+		//	    ifnam,
+		//	    ip_adrsprint(ipb1, (unsigned char *)&iplocal),
+		//	    ip_adrsprint(ipb2, (unsigned char *)&ipremote));
+
+    }
+
+
 	/* ifconfig DEV IPLOCAL pointopoint IPREMOTE */
+	sprintf(cmdbuff, "ip link set %s up", ifnam);
+/*
 	sprintf(cmdbuff, "ifconfig %s %s pointopoint %s up",
 		ifnam,
 		ip_adrsprint(ipb1, (unsigned char *)&iplocal),
 		ip_adrsprint(ipb2, (unsigned char *)&ipremote));
+*/
 	if (DP_DBGFLG)
 	    dbprintln("running \"%s\"",cmdbuff);
 	if ((res = system(cmdbuff)) != 0) {
@@ -1989,7 +2081,7 @@ osn_pfinit_tuntap(struct pfdata *pfdata, struct osnpf *osnpf, void *arg)
 #endif /* KLH10_NET_BRIDGE */
 
     if (DP_DBGFLG)
-	dbprintln("osn_pfinit_tuntap completed");
+      dbprintln("%s: completed", __FUNCTION__);
 }
 
 
@@ -2057,7 +2149,7 @@ pfopen_create(char *basename, struct tuntap_context *tt_ctx, struct osnpf *osnpf
     char *ifnam = osnpf->osnpf_ifnam;
 
     if (DP_DBGFLG)
-	dbprint("pfopen_create: ifnam=%s", osnpf->osnpf_ifnam);
+	dbprintln("pfopen_create: ifnam=%s", osnpf->osnpf_ifnam);
 
     if ((s = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
 	esfatal(1, "pfopen_create: socket() failed");
